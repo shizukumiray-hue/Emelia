@@ -14,11 +14,6 @@ go.work.sum
 vendor/
 
 # === Rust / Cargo ===
-/target/
-/debug/
-/release/
-**/*.rs.bk
-Cargo.lock # Opsional: Hapus pagar jika kamu membuat library, tapi biarkan untuk aplikasi
 
 # === Build Artifacts (General) ===
 out/

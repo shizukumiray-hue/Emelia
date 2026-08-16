@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"emilia/useragent"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"net"
@@ -32,7 +33,7 @@ var workerURLs []string
 const (
 	TraceURL     = "https://1.1.1.1/cdn-cgi/trace"
 	AwsURL       = "https://checkip.amazonaws.com"
-	FileInput    = "Data/IPPROXY23K.txt"
+	FileInput    = "Data/ALL-MERGED.txt"
 	FileAlive    = "Data/alive.txt"
 	FilePriority = "Data/Country-ALIVE.txt"
 )
@@ -76,6 +77,10 @@ type Stats struct {
 
 // === FUNGSI UTAMA ===
 func main() {
+	mergeMode := flag.Bool("merge", false, "gabung IPPROXY23K + ALL-*.txt jadi satu file, isi org via API check, dedupe IP,PORT")
+	limit := flag.Int("limit", 0, "batasi jumlah API check (0 = semua)")
+	flag.Parse()
+
 	// Buat folder Data dengan permission yang aman
 	if err := os.MkdirAll("Data", 0750); err != nil { // ✅ 0750 bukan 0777
 		fmt.Printf("❌ Gagal membuat folder Data: %v\n", err)
@@ -92,6 +97,11 @@ func main() {
 		return
 	}
 
+	if *mergeMode {
+		runMerge(*limit)
+		return
+	}
+
 	// 1. DAPATKAN IP ASLI
 	fmt.Print("🔍 Mendapatkan IP Asli... ")
 	realIP, err := getPublicIPDirect()
@@ -102,7 +112,7 @@ func main() {
 	if realIP != "" {
 		fmt.Printf("%s\n\n", realIP)
 	} else {
-		fmt.Println("N/A (skip validation)\n")
+		fmt.Println("N/A (skip validation)")
 	}
 
 	// 2. BACA FILE INPUT
@@ -116,7 +126,7 @@ func main() {
 		fmt.Println("❌ Tidak ada proxy untuk di-scan.")
 		return
 	}
-	fmt.Println("🚀 Memulai scan socket parallel, Mohon tunggu.\n")
+	fmt.Println("🚀 Memulai scan socket parallel, Mohon tunggu.")
 
 	// 3. SCANNING
 	stats := &Stats{Total: int32(len(proxies))}
@@ -202,12 +212,15 @@ func loadConfig() bool {
 	// Ambil URL dari Environment Variable
 	envURLs := os.Getenv("WORKER_URLS")
 	if envURLs == "" {
+		// Fallback: baca dari keys.json (hardcode)
+		envURLs = readKeysFromJSON()
+	}
+	if envURLs == "" {
 		fmt.Println("❌ ERROR: WORKER_URLS tidak ditemukan!")
 		fmt.Println("\n📝 Cara setup:")
 		fmt.Println("   1. Lokal: Buat file .env dengan isi:")
 		fmt.Println("      WORKER_URLS=https://url1.com,https://url2.com")
-		fmt.Println("   2. GitHub: Tambah di Settings > Secrets > Actions")
-		fmt.Println("      dengan nama WORKER_URLS")
+		fmt.Println("      atau hardcode di keys.json")
 		return false
 	}
 
@@ -235,6 +248,19 @@ func isValidURL(rawURL string) bool {
 		return false
 	}
 	return u.Scheme == "http" || u.Scheme == "https"
+}
+
+// readKeysFromJSON: baca WORKER_URLS dari keys.json
+func readKeysFromJSON() string {
+	data, err := os.ReadFile("keys.json")
+	if err != nil {
+		return ""
+	}
+	var cfg map[string]string
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(cfg["WORKER_URLS"])
 }
 
 // === FUNGSI BANTU UTAMA ===
