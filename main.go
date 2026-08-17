@@ -30,10 +30,18 @@ const (
 // Global variable, akan diisi otomatis dari Env/Secret
 var workerURLs []string
 
+// Statistik kegagalan per layer (untuk diagnosa)
+var (
+	statDialErr   int32
+	statTLSErr    int32
+	statHTTPErr   int32
+	statNon200Err int32
+)
+
 const (
 	TraceURL     = "https://1.1.1.1/cdn-cgi/trace"
 	AwsURL       = "https://checkip.amazonaws.com"
-	FileInput    = "Data/ALL-MERGED.txt"
+	FileInput    = "Data/Gabungan_sementara.txt"
 	FileAlive    = "Data/alive.txt"
 	FilePriority = "Data/Country-ALIVE.txt"
 )
@@ -77,8 +85,7 @@ type Stats struct {
 
 // === FUNGSI UTAMA ===
 func main() {
-	mergeMode := flag.Bool("merge", false, "gabung IPPROXY23K + ALL-*.txt jadi satu file, isi org via API check, dedupe IP,PORT")
-	limit := flag.Int("limit", 0, "batasi jumlah API check (0 = semua)")
+	limit := flag.Int("limit", 0, "batasi jumlah API check (0 = semua, >0 = mode tes tanpa tulis file)")
 	flag.Parse()
 
 	// Buat folder Data dengan permission yang aman
@@ -94,11 +101,6 @@ func main() {
 
 	// 0. LOAD CONFIG (SECURE)
 	if !loadConfig() {
-		return
-	}
-
-	if *mergeMode {
-		runMerge(*limit)
 		return
 	}
 
@@ -125,6 +127,10 @@ func main() {
 	if len(proxies) == 0 {
 		fmt.Println("❌ Tidak ada proxy untuk di-scan.")
 		return
+	}
+	if *limit > 0 && len(proxies) > *limit {
+		proxies = proxies[:*limit]
+		fmt.Printf("🧪 Mode tes: hanya %d proxy pertama (file tidak ditulis)\n", *limit)
 	}
 	fmt.Println("🚀 Memulai scan socket parallel, Mohon tunggu.")
 
@@ -174,6 +180,9 @@ func main() {
 
 	// 4. SORTING & SAVING
 	fmt.Println("\n\n🏁 Scanning selesai. Menyimpan hasil.")
+	fmt.Printf("📊 Diagnosa: dial gagal=%d | TLS gagal=%d | HTTP gagal=%d | non-200=%d\n",
+		atomic.LoadInt32(&statDialErr), atomic.LoadInt32(&statTLSErr),
+		atomic.LoadInt32(&statHTTPErr), atomic.LoadInt32(&statNon200Err))
 
 	var validProxies []ValidProxy
 	for res := range resultsChan {
@@ -182,7 +191,7 @@ func main() {
 		}
 	}
 
-	saveResults(validProxies)
+	saveResults(validProxies, *limit)
 }
 
 // === FUNGSI SECURITY & CONFIG ===
@@ -376,6 +385,7 @@ func rawSocketRequest(targetURL, proxyIP, proxyPort string) ([]byte, int) {
 	conn, err := net.DialTimeout("tcp", net.JoinHostPort(proxyIP, proxyPort),
 		time.Duration(TimeoutSec)*time.Second)
 	if err != nil {
+		atomic.AddInt32(&statDialErr, 1)
 		return nil, 0
 	}
 	defer conn.Close()
@@ -388,6 +398,7 @@ func rawSocketRequest(targetURL, proxyIP, proxyPort string) ([]byte, int) {
 
 	tlsConn := tls.Client(conn, tlsConfig)
 	if tlsConn == nil {
+		atomic.AddInt32(&statTLSErr, 1)
 		return nil, 0
 	}
 
@@ -395,6 +406,7 @@ func rawSocketRequest(targetURL, proxyIP, proxyPort string) ([]byte, int) {
 	tlsConn.SetDeadline(deadline)
 
 	if err := tlsConn.Handshake(); err != nil {
+		atomic.AddInt32(&statTLSErr, 1)
 		return nil, 0
 	}
 	defer tlsConn.Close()
@@ -410,18 +422,25 @@ func rawSocketRequest(targetURL, proxyIP, proxyPort string) ([]byte, int) {
 	)
 
 	if _, err := tlsConn.Write([]byte(rawRequest)); err != nil {
+		atomic.AddInt32(&statHTTPErr, 1)
 		return nil, 0
 	}
 
 	reader := bufio.NewReader(tlsConn)
 	resp, err := http.ReadResponse(reader, nil)
 	if err != nil {
+		atomic.AddInt32(&statHTTPErr, 1)
 		return nil, 0
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != 200 {
+		atomic.AddInt32(&statNon200Err, 1)
+	}
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		atomic.AddInt32(&statHTTPErr, 1)
 		return nil, resp.StatusCode
 	}
 
@@ -570,9 +589,16 @@ func progressMonitor(ticker *time.Ticker, done chan bool, stats *Stats) {
 	}
 }
 
-func saveResults(proxies []ValidProxy) {
+func saveResults(proxies []ValidProxy, limit int) {
 	if len(proxies) == 0 {
 		fmt.Println("❌ Tidak ada proxy yang valid untuk disimpan.")
+		return
+	}
+	if limit > 0 {
+		fmt.Printf("🧪 Mode tes (limit=%d): file tidak ditulis.\n", limit)
+		for _, p := range proxies[:min(5, len(proxies))] {
+			fmt.Printf("   %s,%s,%s,%s\n", p.IP, p.Port, p.Country, cleanOrgName(p.Org))
+		}
 		return
 	}
 
