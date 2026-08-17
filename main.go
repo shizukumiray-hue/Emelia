@@ -43,7 +43,6 @@ const (
 	AwsURL       = "https://checkip.amazonaws.com"
 	FileInput    = "Data/Gabungan_sementara.txt"
 	FileAlive    = "Data/alive.txt"
-	FilePriority = "Data/Country-ALIVE.txt"
 )
 
 var regexOrg = regexp.MustCompile(`[^a-zA-Z0-9\s]`)
@@ -615,65 +614,8 @@ func saveResults(proxies []ValidProxy, limit int) {
 		return
 	}
 
-	// 2. SAVE PRIORITY
-	prioList := make([]ValidProxy, len(proxies))
-	copy(prioList, proxies)
-
-	priorityOrder := map[string]int{
-		"ID": 1,
-		"MY": 2,
-		"SG": 3,
-		"HK": 4,
-	}
-
-	sort.SliceStable(prioList, func(i, j int) bool {
-		c1 := prioList[i].Country
-		c2 := prioList[j].Country
-
-		prio1, hasPrio1 := priorityOrder[c1]
-		prio2, hasPrio2 := priorityOrder[c2]
-
-		if hasPrio1 && hasPrio2 {
-			if prio1 == prio2 {
-				return prioList[i].IP < prioList[j].IP
-			}
-			return prio1 < prio2
-		}
-		if hasPrio1 {
-			return true
-		}
-		if hasPrio2 {
-			return false
-		}
-		if c1 == c2 {
-			return prioList[i].IP < prioList[j].IP
-		}
-		return c1 < c2
-	})
-
-	if err := writeToFile(FilePriority, prioList); err != nil {
-		fmt.Printf("❌ Gagal menyimpan %s: %v\n", FilePriority, err)
-		return
-	}
-
-	// 3. REPORT
-	countryCount := make(map[string]int)
-	for _, p := range prioList {
-		countryCount[p.Country]++
-	}
-
 	fmt.Printf("\n\n📁 Output Report:\n")
 	fmt.Printf("   ✓ Alive.txt    : %d proxies (Urut A-Z)\n", len(proxies))
-	fmt.Printf("   ✓ Priority.txt : %d proxies (ID → MY → SG → HK → A-Z)\n", len(prioList))
-
-	fmt.Println("\n📊 Jumlah per negara prioritas:")
-	for _, code := range []string{"ID", "MY", "SG", "HK"} {
-		if count, ok := countryCount[code]; ok {
-			fmt.Printf("   - %s: %d proxies\n", code, count)
-		} else {
-			fmt.Printf("   - %s: 0 proxies\n", code)
-		}
-	}
 }
 
 func writeToFile(filename string, proxies []ValidProxy) error {
