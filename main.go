@@ -39,10 +39,10 @@ var (
 )
 
 const (
-	TraceURL     = "https://1.1.1.1/cdn-cgi/trace"
-	AwsURL       = "https://checkip.amazonaws.com"
-	FileInput    = "Data/Gabungan_sementara.txt"
-	FileAlive    = "Data/alive.txt"
+	TraceURL  = "https://1.1.1.1/cdn-cgi/trace"
+	AwsURL    = "https://checkip.amazonaws.com"
+	FileInput = "Data/proxy-rabu-16-agustus.txt"
+	FileAlive = "Data/alive.txt"
 )
 
 var regexOrg = regexp.MustCompile(`[^a-zA-Z0-9\s]`)
