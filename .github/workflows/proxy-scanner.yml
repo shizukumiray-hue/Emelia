@@ -39,18 +39,12 @@ jobs:
           echo "{\"WORKER_URLS\": \"${{ secrets.WORKER_URLS }}\"}" > keys.json
           echo "✅ keys.json created (not committing to repo)"
 
-      - name: 🏗️ Build Go Binary
-        run: |
-          go build -o emilia .
-          chmod +x emilia
-          echo "✅ Binary built successfully"
-
       - name: 📡 Fetch Proxies from Telegram
         id: fetch
         continue-on-error: true
         run: |
           echo "📥 Fetching from Telegram channel @zip_cm_edu_kg..."
-          if ./emilia -fetch zip_cm_edu_kg -output Data/telegram_fetch.txt; then
+          if go run *.go -fetch zip_cm_edu_kg -output Data/telegram_fetch.txt; then
             if [ -f Data/telegram_fetch.txt ]; then
               FETCHED=$(wc -l < Data/telegram_fetch.txt | tr -d ' ')
               echo "fetched=$FETCHED" >> $GITHUB_OUTPUT
@@ -88,7 +82,7 @@ jobs:
           echo "⏳ This may take a while..."
           
           START_TIME=$(date +%s)
-          ./emilia -input ${{ steps.merge.outputs.input_file }}
+          go run *.go -input ${{ steps.merge.outputs.input_file }}
           END_TIME=$(date +%s)
           
           DURATION=$((END_TIME - START_TIME))

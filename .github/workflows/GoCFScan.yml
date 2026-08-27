@@ -26,7 +26,7 @@ jobs:
 
     - name: 🚀 Run Scanner
       run: |
-        go run .
+        go run *.go
 
     - name: 📤 Commit Results
       if: success()
