@@ -85,7 +85,26 @@ type Stats struct {
 // === FUNGSI UTAMA ===
 func main() {
 	limit := flag.Int("limit", 0, "batasi jumlah API check (0 = semua, >0 = mode tes tanpa tulis file)")
+	inputFile := flag.String("input", FileInput, "file input proxy untuk di-scan")
+	fetchChannel := flag.String("fetch", "", "fetch proxies from Telegram channel (e.g., zip_cm_edu_kg)")
+	outputFetch := flag.String("output", "Data/telegram_fetch.txt", "output file for fetched proxies")
 	flag.Parse()
+	
+	// Mode: Fetch from Telegram
+	if *fetchChannel != "" {
+		fmt.Println("==========================================")
+		fmt.Println("   TELEGRAM PROXY FETCHER")
+		fmt.Println("==========================================")
+		fmt.Printf("📡 Fetching from channel: @%s\n", *fetchChannel)
+		
+		if err := fetchTelegramProxies(*fetchChannel, *outputFetch); err != nil {
+			fmt.Printf("❌ Error: %v\n", err)
+			os.Exit(1)
+		}
+		
+		fmt.Printf("✅ Saved to: %s\n", *outputFetch)
+		return
+	}
 
 	// Buat folder Data dengan permission yang aman
 	if err := os.MkdirAll("Data", 0750); err != nil { // ✅ 0750 bukan 0777
@@ -117,7 +136,7 @@ func main() {
 	}
 
 	// 2. BACA FILE INPUT
-	proxies, err := readInputFile(FileInput)
+	proxies, err := readInputFile(*inputFile)
 	if err != nil {
 		fmt.Printf("❌ Error membaca file input: %v\n", err)
 		return
@@ -619,18 +638,30 @@ func saveResults(proxies []ValidProxy, limit int) {
 }
 
 func writeToFile(filename string, proxies []ValidProxy) error {
-	file, err := os.Create(filename)
+	tmpFile := filename + ".tmp"
+	
+	file, err := os.Create(tmpFile)
 	if err != nil {
 		return err
 	}
-	defer file.Close()
-
+	
 	writer := bufio.NewWriter(file)
 	for _, p := range proxies {
 		line := fmt.Sprintf("%s,%s,%s,%s\n", p.IP, p.Port, p.Country, p.Org)
 		if _, err := writer.WriteString(line); err != nil {
+			file.Close()
+			os.Remove(tmpFile)
 			return err
 		}
 	}
-	return writer.Flush()
+	
+	if err := writer.Flush(); err != nil {
+		file.Close()
+		os.Remove(tmpFile)
+		return err
+	}
+	file.Close()
+	
+	// Atomic rename (POSIX guarantee)
+	return os.Rename(tmpFile, filename)
 }

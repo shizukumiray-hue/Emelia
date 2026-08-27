@@ -1,0 +1,187 @@
+name: 🔄 Proxy Scanner - Auto Fetch & Validate
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # Daily at 2 AM UTC
+  workflow_dispatch:     # Manual trigger
+
+permissions:
+  contents: write
+
+concurrency:
+  group: proxy-scanner
+  cancel-in-progress: false
+
+jobs:
+  scan-proxies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    
+    steps:
+      - name: 📂 Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 🛠️ Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: true
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: 🔑 Create keys.json from Secrets
+        run: |
+          echo "{\"WORKER_URLS\": \"${{ secrets.WORKER_URLS }}\"}" > keys.json
+          echo "✅ keys.json created (not committing to repo)"
+
+      - name: 🏗️ Build Go Binary
+        run: |
+          go build -o emilia .
+          chmod +x emilia
+          echo "✅ Binary built successfully"
+
+      - name: 📡 Fetch Proxies from Telegram
+        id: fetch
+        continue-on-error: true
+        run: |
+          echo "📥 Fetching from Telegram channel @zip_cm_edu_kg..."
+          if ./emilia -fetch zip_cm_edu_kg -output Data/telegram_fetch.txt; then
+            if [ -f Data/telegram_fetch.txt ]; then
+              FETCHED=$(wc -l < Data/telegram_fetch.txt | tr -d ' ')
+              echo "fetched=$FETCHED" >> $GITHUB_OUTPUT
+              echo "✅ Fetched $FETCHED proxies from Telegram"
+            else
+              echo "fetched=0" >> $GITHUB_OUTPUT
+              echo "⚠️ No proxies fetched"
+            fi
+          else
+            echo "fetched=0" >> $GITHUB_OUTPUT
+            echo "⚠️ Telegram fetch failed"
+          fi
+
+      - name: 🔗 Merge Proxies
+        id: merge
+        run: |
+          if [ -f Data/telegram_fetch.txt ] && [ -s Data/telegram_fetch.txt ]; then
+            echo "🔗 Merging Telegram proxies with existing..."
+            python3 gabung.py Data/telegram_fetch.txt Data/proxy-rabu-16-agustus.txt -o Data/merged_input.txt
+            INPUT_FILE="Data/merged_input.txt"
+          else
+            echo "ℹ️ No new Telegram proxies, using existing file only"
+            INPUT_FILE="Data/proxy-rabu-16-agustus.txt"
+          fi
+          
+          MERGED=$(wc -l < "$INPUT_FILE" | tr -d ' ')
+          echo "merged=$MERGED" >> $GITHUB_OUTPUT
+          echo "input_file=$INPUT_FILE" >> $GITHUB_OUTPUT
+          echo "✅ Total proxies to scan: $MERGED"
+
+      - name: 🔍 Scan & Validate Proxies
+        id: scan
+        run: |
+          echo "🔍 Starting proxy validation..."
+          echo "⏳ This may take a while..."
+          
+          START_TIME=$(date +%s)
+          ./emilia -input ${{ steps.merge.outputs.input_file }}
+          END_TIME=$(date +%s)
+          
+          DURATION=$((END_TIME - START_TIME))
+          MINUTES=$((DURATION / 60))
+          SECONDS=$((DURATION % 60))
+          
+          if [ -f Data/alive.txt ]; then
+            ALIVE=$(wc -l < Data/alive.txt | tr -d ' ')
+            echo "alive=$ALIVE" >> $GITHUB_OUTPUT
+            echo "✅ Found $ALIVE alive proxies"
+          else
+            echo "alive=0" >> $GITHUB_OUTPUT
+            echo "⚠️ No alive proxies found"
+          fi
+          
+          echo "duration=${MINUTES}m ${SECONDS}s" >> $GITHUB_OUTPUT
+
+      - name: 📊 Generate Summary
+        run: |
+          FETCHED="${{ steps.fetch.outputs.fetched }}"
+          MERGED="${{ steps.merge.outputs.merged }}"
+          ALIVE="${{ steps.scan.outputs.alive }}"
+          DURATION="${{ steps.scan.outputs.duration }}"
+          
+          echo "=========================================="
+          echo "📊 SCAN SUMMARY"
+          echo "=========================================="
+          echo "📥 Fetched from Telegram: ${FETCHED:-0}"
+          echo "🔗 Total merged: ${MERGED:-0}"
+          echo "✅ Alive proxies: ${ALIVE:-0}"
+          echo "⏱️ Duration: ${DURATION:-N/A}"
+          echo "=========================================="
+          
+          # Calculate success rate
+          if [ "$MERGED" -gt 0 ] && [ "$ALIVE" -gt 0 ]; then
+            RATE=$(awk "BEGIN {printf \"%.2f\", ($ALIVE / $MERGED) * 100}")
+            echo "📈 Success rate: ${RATE}%"
+          fi
+
+      - name: 📤 Commit & Push Results
+        if: success()
+        run: |
+          git config user.name "Proxy Scanner Bot"
+          git config user.email "bot@github-actions"
+          
+          # Stage files
+          git add Data/alive.txt
+          [ -f Data/telegram_fetch.txt ] && git add Data/telegram_fetch.txt
+          [ -f Data/merged_input.txt ] && git add Data/merged_input.txt
+          
+          # Check if there are changes
+          if git diff --staged --quiet; then
+            echo "ℹ️ No changes to commit"
+            exit 0
+          fi
+          
+          # Create commit message with stats
+          FETCHED="${{ steps.fetch.outputs.fetched }}"
+          MERGED="${{ steps.merge.outputs.merged }}"
+          ALIVE="${{ steps.scan.outputs.alive }}"
+          DURATION="${{ steps.scan.outputs.duration }}"
+          TIMESTAMP=$(date -u +'%Y-%m-%d %H:%M UTC')
+          
+          git commit -m "🤖 Auto-update proxies - $TIMESTAMP" \
+                     -m "" \
+                     -m "- Fetched: ${FETCHED:-0} proxies from Telegram" \
+                     -m "- Merged: ${MERGED:-0} unique proxies" \
+                     -m "- Alive: ${ALIVE:-0} validated proxies" \
+                     -m "- Runtime: ${DURATION:-N/A}"
+          
+          # Push with retry
+          MAX_RETRIES=3
+          RETRY=0
+          while [ $RETRY -lt $MAX_RETRIES ]; do
+            if git push origin main; then
+              echo "✅ Successfully pushed to repository"
+              exit 0
+            else
+              RETRY=$((RETRY + 1))
+              if [ $RETRY -lt $MAX_RETRIES ]; then
+                echo "⚠️ Push failed, retrying ($RETRY/$MAX_RETRIES)..."
+                sleep 5
+                git pull --rebase origin main
+              else
+                echo "❌ Failed to push after $MAX_RETRIES attempts"
+                exit 1
+              fi
+            fi
+          done
+
+      - name: 🧹 Cleanup
+        if: always()
+        run: |
+          # Remove keys.json (contains secrets)
+          rm -f keys.json
+          echo "✅ Cleanup complete"
