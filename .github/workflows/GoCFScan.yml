@@ -19,9 +19,14 @@ jobs:
       with:
         go-version: '1.25'
 
+    - name: 🔑 Create keys.json from Secrets
+      run: |
+        echo "{\"WORKER_URLS\": \"${{ secrets.WORKER_URLS }}\"}" > keys.json
+        echo "✅ keys.json created"
+
     - name: 🚀 Run Scanner
       run: |
-        go run main.go
+        go run .
 
     - name: 📤 Commit Results
       if: success()
