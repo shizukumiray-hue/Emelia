@@ -25,18 +25,32 @@ jobs:
           mkdir -p Data
           go run *.go -fetch zip_cm_edu_kg -output Data/telegram_fetch.txt || true
 
+      - name: 🔗 Merge with Existing IP Proxies
+        run: |
+          if [ -s Data/telegram_fetch.txt ]; then
+            python3 gabung.py Data/telegram_fetch.txt Data/proxy-rabu-16-agustus.txt -o Data/merged_input.txt
+          else
+            cp Data/proxy-rabu-16-agustus.txt Data/merged_input.txt
+          fi
+
+      - name: 🔍 Health Check Proxies (Scan)
+        env:
+          WORKER_URLS: ${{ secrets.WORKER_URLS }}
+        run: |
+          go run *.go -input Data/merged_input.txt || true
+
       - name: 📤 Push to Repo A (Emilia)
         env:
           TOKEN: ${{ secrets.TOKEN_AKUN_A }}
         run: |
-          if [ -s Data/telegram_fetch.txt ]; then
+          if [ -s Data/alive.txt ]; then
             git clone https://x-access-token:${TOKEN}@github.com/papapapapdelesia/Emilia.git repo_a
-            cp Data/telegram_fetch.txt repo_a/Data/active_from_b.txt
+            cp Data/alive.txt repo_a/Data/active_from_b.txt
             cd repo_a
             git config user.name "github-actions[bot]"
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git add Data/active_from_b.txt
-            git commit -m "Update proxies from Telegram (Repo B)" && git push || echo "No changes"
+            git commit -m "Update alive proxies from Emelia" && git push || echo "No changes"
           else
-            echo "No proxies fetched, skipping push."
+            echo "No alive proxies found, skipping push."
           fi

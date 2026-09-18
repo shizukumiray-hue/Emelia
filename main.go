@@ -538,6 +538,7 @@ func readInputFile(path string) ([]ProxyInput, error) {
 	var proxies []ProxyInput
 	scanner := bufio.NewScanner(file)
 	lineNum := 0
+	seen := make(map[string]bool)
 
 	for scanner.Scan() {
 		lineNum++
@@ -553,7 +554,9 @@ func readInputFile(path string) ([]ProxyInput, error) {
 			country := strings.TrimSpace(parts[2])
 			org := strings.TrimSpace(parts[3])
 
-			if ip != "" && port != "" && isValidIP(ip) {
+			key := ip + ":" + port
+			if ip != "" && port != "" && isValidIP(ip) && !seen[key] {
+				seen[key] = true
 				proxies = append(proxies, ProxyInput{
 					IP:       ip,
 					Port:     port,
